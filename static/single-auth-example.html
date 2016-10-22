@@ -1,0 +1,103 @@
+
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="Butanol Patent Site">
+    <meta name="author" content="Eugene Butler">
+    <link rel="icon" href="favicon.ico">
+
+    <title>U2F Single-Factor Example App</title>
+    <script src='/u2f-api.js'></script>
+    <script src='/jquery-2.2.4.min.js'></script>
+    <link rel="stylesheet" href="/bootstrap.min.css" integrity="sha384-1q8mTJOASx8j1Au+a5WDVnPi2lkFfwwEAa8hDDdjZlpLegxhjVME1fgjWPGmkzs7" crossorigin="anonymous">
+  </head>
+
+  <body>
+    <div class="container">
+      <!-- HEADER -->
+      <div class="header clearfix">
+        <div class="row">
+          <div class="col-sm-8">
+            <h3 class="text-muted">Factor</h3>
+            <h5>Single-factor authentication?!</h5>
+          </div>
+        </div>
+      </div>
+
+      <div class="row" style="margin-bottom: 24px;">
+        <section id="login-section" class="col-sm-12" style="border: 1px solid #ddd; border-radius: 4px;">
+          <h3>Step 1: Press Button</h3>
+          <form id="login-form">
+            <button type="submit" class="btn btn-default btn-lg" style="display: block; margin: auto; font-size: 72px; margin-bottom: 24px;">Login</button>
+          </form>
+        </section>
+      </div>
+
+      <section id="results-section"></section>
+    </div> <!-- /container -->
+    <script>
+      function postData(url, data) {
+        return fetch(url, {
+          headers: {
+            'Accept': 'application/json',
+            'Content-Type': 'application/json'
+          },
+          method: "POST",
+          body: JSON.stringify(data)
+        })
+      }
+
+      // Get challenge from API
+      const fetchRequest = fetch('/request').then((response) => response.json());
+
+      $('#login-form').submit((event) => {
+        event.preventDefault();
+        fetchRequest.then((request) => {
+          prependAlert('info', `Login started. Tap Yubikey.`);
+          u2f.register('https://localhost:4000', [request], [], (registrationResponse) => {
+            postData('/single-register',registrationResponse)
+              .then((response) => response.json())
+              .then((responseResponse) => {
+                prependAlert('success', `Success. Tap Yubikey again.`);
+                signup(responseResponse.ident);
+              })
+              .catch((err) => {
+                prependAlert('danger', `Login Failed`);
+              });
+          });
+        });
+      });
+      // Sign-in
+      function signup(identifier) {
+        fetch(`/keyhandle?identifier=${identifier}`)
+          .then((response) => response.json())
+          .then((keyHandle) => {
+            // Fetch new Request from server
+            fetchRequest.then((request) => {
+              const {appId, challenge, version} = request;
+              u2f.sign(appId, challenge, [{keyHandle, version}], (data) => {
+                postData('/user-signin', {
+                    // A huge hack, but whatever. Use user's cert as their username.
+                    user: identifier,
+                    pass: '',
+                    signin: data
+                  }).then(response => response.json())
+                  .then((body) => {
+                    prependAlert('success', `Logged In!`);
+                  });
+              });
+          });
+        }).catch(response => {
+          prependAlert('danger', `FAILED SIGNIN (No keyHandle found for key)`);
+        });
+      };
+
+      function prependAlert(alertClass, alertText) {
+        $('#results-section').prepend(`<div id="registration-result" class="alert alert-${alertClass}">${alertText}</div>`);
+      }
+    </script>
+  </body>
+</html>

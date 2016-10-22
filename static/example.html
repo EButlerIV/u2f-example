@@ -1,0 +1,168 @@
+
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="Butanol Patent Site">
+    <meta name="author" content="Eugene Butler">
+    <link rel="icon" href="favicon.ico">
+
+    <title>U2F Example App</title>
+    <script src='/u2f-api.js'></script>
+    <script src='/jquery-2.2.4.min.js'></script>
+    <link rel="stylesheet" href="/bootstrap.min.css" integrity="sha384-1q8mTJOASx8j1Au+a5WDVnPi2lkFfwwEAa8hDDdjZlpLegxhjVME1fgjWPGmkzs7" crossorigin="anonymous">
+  </head>
+
+  <body>
+    <div class="container">
+      <!-- HEADER -->
+      <div class="header clearfix">
+        <div class="row">
+          <div class="col-sm-8">
+            <h3 class="text-muted">U2F Demo App</h3>
+            <h5>Demonstration of basic login flow.</h5>
+          </div>
+        </div>
+      </div>
+
+      <!-- REGISTRATION SECTION -->
+      <div class="row" style="margin-bottom: 24px;">
+      <div style="display: table; width: 100%;">
+        <section class="registrationSection col-sm-6" style="border: 1px solid #ddd; border-radius: 4px; display: table-cell; float: none;">
+          <h3>Step 1: Register</h3>
+          <p>User registers with a new yubikey.</p>
+          <form id="registration-form">
+            <div class="form-group">
+              <label for="email">Email address</label>
+              <input type="email" class="form-control" id="email" placeholder="Email">
+            </div>
+            <div class="form-group">
+              <label for="password">Password</label>
+              <input type="password" class="form-control" id="password" placeholder="Password">
+            </div>
+            <button type="submit" class="btn btn-default">Register</button>
+          </form>
+        </section>
+
+
+        <!-- SIGN IN SECTION -->
+        <section class="signinSection col-sm-6" style="border: 1px solid #ddd; border-radius: 4px;  padding: 24px; display: table-cell; float: none;">
+          <h3>Step 2: Signin</h3>
+          <p>User signs in with same username and password, confirms with yubikey.</p>
+          <form id="signin-form">
+            <div class="form-group">
+              <label for="email">Email address</label>
+              <input type="email" class="form-control" id="email" placeholder="Email">
+            </div>
+            <div class="form-group">
+              <label for="password">Password</label>
+              <input type="password" class="form-control" id="password" placeholder="Password">
+            </div>
+            <button type="submit" class="btn btn-default">Signin</button>
+          </form>
+        </section>
+      </div>
+    </div>
+
+      <section id="results-section"></section>
+    </div> <!-- /container -->
+    <script>
+      function postData(url, data) {
+        return fetch(url, {
+          headers: {
+            'Accept': 'application/json',
+            'Content-Type': 'application/json'
+          },
+          method: "POST",
+          body: JSON.stringify(data)
+        })
+      }
+
+      // Get challenge from API
+      const fetchRequest = fetch('/request').then((response) => response.json());
+
+      // Registration flow
+      $('#registration-form').submit((event) => {
+        event.preventDefault();
+        const [email, password, submit] = event.target;
+        // Fetch new Request from server
+        fetchRequest.then((request) => {
+          // Send Register Request to Yubikey
+          u2f.register('https://localhost:4000', [request], [], (registrationResponse) => {
+            // Send Register Response to server
+            postData('/user-register', {
+                username: email.value,
+                password: password.value,
+                registration: registrationResponse
+              })
+              .then((response) => response.json())
+              .then((responseResponse) => {
+                prependAlert('success', `Registered! ${responseResponse.keyHandle}`);
+              })
+              .catch(() => {
+                prependAlert('danger', `FAILED REGISTRATION`);
+              });
+          });
+        });
+      });
+
+      // Sign-in flow
+      /*$('#signin-form').submit((event) => {
+        event.preventDefault();
+        const [email, password, submit] = event.target;
+        // Fetch new Request from server
+        fetchRequest.then((request) => {
+          // Send Register Request to Yubikey
+          u2f.register('https://localhost:4000', [request], [], (registrationResponse) => {
+            // Send Register Response to server
+            postData('/user-register', {
+                username: email.value,
+                password: password.value,
+                registration: registrationResponse
+              })
+              .then((response) => response.json())
+              .then((responseResponse) => {
+                prependAlert('success', `Registered! ${responseResponse.keyHandle}`);
+              })
+              .catch(() => {
+                prependAlert('danger', `FAILED REGISTRATION`);
+              });
+          });
+        });
+      });*/
+
+      // Sign-in
+      $('#signin-form').submit((event) => {
+        event.preventDefault();
+        const [email, password, submit] = event.target;
+        //Fetch user's keyHandle from the server
+        fetch(`/keyhandle?identifier=${email.value}${password.value}`)
+          .then((response) => response.json())
+          .then((keyHandle) => {
+            // Fetch new Request from server
+            fetchRequest.then((request) => {
+              const {appId, challenge, version} = request;
+              u2f.sign(appId, challenge, [{keyHandle, version}], (data) => {
+                postData('/user-signin', {
+                    user: email.value,
+                    pass: password.value,
+                    signin: data
+                  }).then(response => response.json())
+                  .then((body) => {
+                    prependAlert('success', `Logged In! (${email.value}, ${password.value}, ${keyHandle})`);
+                  });
+              });
+          });
+        }).catch(response => {
+          prependAlert('danger', `FAILED SIGNIN (No keyHandle found for ${email.value})`);
+        });
+      });
+
+      function prependAlert(alertClass, alertText) {
+        $('#results-section').prepend(`<div id="registration-result" class="alert alert-${alertClass}">${alertText}</div>`);
+      }
+    </script>
+  </body>
+</html>
