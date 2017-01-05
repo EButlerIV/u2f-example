@@ -57,6 +57,14 @@ data Identifier = Identifier {
 } deriving (Show, Generic)
 instance ToJSON Identifier
 
+pushToCache :: (IORef [a]) -> a -> IO()
+pushToCache cache item = do
+  modifyIORef cache (++ [item])
+
+--popFromCache :: (IORef [b]) -> a -> (a -> b) -> IO(Maybe b)
+--popFromCache cache item fn = do
+
+
 -- | RequestCache, an in-memory list of outstanding requests.
 requestCache :: [Request]
 requestCache = []
@@ -108,7 +116,7 @@ routes rCache rSaved = do
   get "/request" $ do
     chall <- liftIO $ randomChallenge
     request <- pure $ Request (T.pack "https://localhost:4000") (T.pack "U2F_V2") chall Nothing
-    written <- liftIO $ modifyIORef rCache (++ [request])
+    written <- liftIO $ pushToCache rCache request
     json $ request
   -- | Endpoints for username-based registration
   post "/user-register" $ do
@@ -123,7 +131,7 @@ routes rCache rSaved = do
       return (verifiedReg, (registrationData_publicKey registrationData), (username userRegistration) ++ (password userRegistration))
     case (possibleRegistration) of
       Right (r, pkey, identifier) -> do
-        liftIO $ modifyIORef rSaved (++ [SavedRegistration r  pkey (Just identifier)])
+        liftIO $ pushToCache rSaved (SavedRegistration r  pkey (Just identifier))
         json r
       Left err -> do
         raise $ TL.pack (show err)
@@ -152,7 +160,7 @@ routes rCache rSaved = do
       return (verifiedReg, (registrationData_publicKey registrationData), (T.unpack $ formatOutputBase64 $ registrationData_certificate registrationData))
     case (possibleRegistration) of
       Right (r, pkey, identifier) -> do
-        liftIO $ modifyIORef rSaved (++ [SavedRegistration r pkey (Just identifier)])
+        liftIO $ pushToCache rSaved (SavedRegistration r pkey (Just identifier))
         json $ Identifier $ identifier
       Left err -> do
         raise $ TL.pack (show err)
@@ -163,7 +171,8 @@ routes rCache rSaved = do
     possibleSignin <- return $ do
       userSignin <- parseUserSignin signinJSON
       signin <- pure $ signin userSignin
-      currentRequest <- findRequestByChallenge requests (clientData_challenge $ fromRight $ parseClientData $ TE.encodeUtf8 $ signin_clientData signin)
+      chall <- pure $ (clientData_challenge $ fromRight $ parseClientData $ TE.encodeUtf8 $ signin_clientData signin)
+      currentRequest <- findRequestByChallenge requests chall
       originalRequest <- findRegistrationByIdentifier registrations ((user userSignin) ++ (pass userSignin))
       return $ verifySignin (savedKeyHandle originalRequest) currentRequest signin
     case (possibleSignin) of
