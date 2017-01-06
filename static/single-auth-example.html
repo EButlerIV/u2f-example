@@ -51,11 +51,13 @@
       }
 
       // Get challenge from API
-      const fetchRequest = fetch('/request').then((response) => response.json());
+      function fetchRequest() {
+        return fetch('/request').then((response) => response.json());
+      };
 
       $('#login-form').submit((event) => {
         event.preventDefault();
-        fetchRequest.then((request) => {
+        fetchRequest().then((request) => {
           prependAlert('info', `Login started. Tap Yubikey.`);
           u2f.register('https://localhost:4000', [request], [], (registrationResponse) => {
             postData('/single-register',registrationResponse)
@@ -76,7 +78,7 @@
           .then((response) => response.json())
           .then((keyHandle) => {
             // Fetch new Request from server
-            fetchRequest.then((request) => {
+            fetchRequest().then((request) => {
               const {appId, challenge, version} = request;
               u2f.sign(appId, challenge, [{keyHandle, version}], (data) => {
                 postData('/user-signin', {

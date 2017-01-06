@@ -59,7 +59,7 @@ instance ToJSON Identifier
 
 pushToCache :: (IORef [a]) -> a -> IO()
 pushToCache cache item = do
-  modifyIORef cache (++ [item])
+  atomicModifyIORef' cache (\x -> (x ++ [item], ()))
 
 --popFromCache :: (IORef [b]) -> a -> (a -> b) -> IO(Maybe b)
 --popFromCache cache item fn = do
@@ -81,11 +81,11 @@ randomChallenge = do
   return $ formatOutputBase64 $ LBS.toStrict $ DB.encode randInt
 
 -- findRegistration
-findRequestByChallenge :: [Request] -> T.Text -> Either U2FError Request
-findRequestByChallenge requestList chall = case (foundRequest) of
-      Just request -> Right request
-      Nothing -> Left ChallengeMismatchError
-    where foundRequest = DL.find (\x -> challenge x == chall) requestList
+partitionRequestsByChallenge :: [Request] -> T.Text -> Either U2FError (Request, [Request])
+partitionRequestsByChallenge requestList chall = case (part) of
+      ([match], remain) -> Right (match, remain)
+      _ -> Left ChallengeMismatchError
+    where part = DL.partition (\x -> challenge x == chall) requestList
 
 findRegistrationByIdentifier :: [SavedRegistration] -> String -> Either U2FError SavedRegistration
 findRegistrationByIdentifier requestList ident = case (foundRequest) of
@@ -125,12 +125,13 @@ routes rCache rSaved = do
     possibleRegistration <- return $ do
       userRegistration <- parseUserRegistration registerJSON
       registration <- pure $ registration userRegistration
-      request <- findRequestByChallenge requests (registration_challenge $ registration)
+      (request, remainingRequests) <- partitionRequestsByChallenge requests (registration_challenge $ registration)
       verifiedReg <- verifyRegistration request registration
       registrationData <- parseRegistrationData $ TE.encodeUtf8 $ registration_registrationData registration
-      return (verifiedReg, (registrationData_publicKey registrationData), (username userRegistration) ++ (password userRegistration))
+      return (verifiedReg, (registrationData_publicKey registrationData), (username userRegistration) ++ (password userRegistration), remainingRequests)
     case (possibleRegistration) of
-      Right (r, pkey, identifier) -> do
+      Right (r, pkey, identifier, remainingRequests) -> do
+        liftIO $ atomicWriteIORef rCache remainingRequests
         liftIO $ pushToCache rSaved (SavedRegistration r  pkey (Just identifier))
         json r
       Left err -> do
@@ -142,11 +143,13 @@ routes rCache rSaved = do
     possibleSignin <- return $ do
       userSignin <- parseUserSignin signinJSON
       signin <- pure $ signin userSignin
-      currentRequest <- findRequestByChallenge requests (clientData_challenge $ fromRight $ parseClientData $ TE.encodeUtf8 $ signin_clientData signin)
+      (currentRequest, remainingRequests) <- partitionRequestsByChallenge requests (clientData_challenge $ fromRight $ parseClientData $ TE.encodeUtf8 $ signin_clientData signin)
       originalRequest <- findRegistrationByIdentifier registrations ((user userSignin) ++ (pass userSignin))
-      return $ verifySignin (savedKeyHandle originalRequest) currentRequest signin
+      return $ (verifySignin (savedKeyHandle originalRequest) currentRequest signin, remainingRequests)
     case (possibleSignin) of
-      Right _ -> json $ TL.pack "{status: 'ok'}"
+      Right (_, remainingRequests) -> do
+        liftIO $ atomicWriteIORef rCache remainingRequests
+        json $ TL.pack "{status: 'ok'}"
       Left err -> raise $ TL.pack (show err)
   -- | Endpoints for username-based registration
   post "/single-register" $ do
@@ -154,12 +157,13 @@ routes rCache rSaved = do
     requests <- liftIO $ readIORef rCache
     possibleRegistration <- return $ do
       registration <- parseRegistration $ LBS.unpack $ registerJSON
-      request <- findRequestByChallenge requests (registration_challenge $ registration)
+      (request, remainingRequests) <- partitionRequestsByChallenge requests (registration_challenge $ registration)
       verifiedReg <- verifyRegistration request registration
       registrationData <- parseRegistrationData $ TE.encodeUtf8 $ registration_registrationData registration
-      return (verifiedReg, (registrationData_publicKey registrationData), (T.unpack $ formatOutputBase64 $ registrationData_certificate registrationData))
+      return (verifiedReg, (registrationData_publicKey registrationData), (T.unpack $ formatOutputBase64 $ registrationData_certificate registrationData), remainingRequests)
     case (possibleRegistration) of
-      Right (r, pkey, identifier) -> do
+      Right (r, pkey, identifier, remainingRequests) -> do
+        liftIO $ atomicWriteIORef rCache remainingRequests
         liftIO $ pushToCache rSaved (SavedRegistration r pkey (Just identifier))
         json $ Identifier $ identifier
       Left err -> do
@@ -172,14 +176,16 @@ routes rCache rSaved = do
       userSignin <- parseUserSignin signinJSON
       signin <- pure $ signin userSignin
       chall <- pure $ (clientData_challenge $ fromRight $ parseClientData $ TE.encodeUtf8 $ signin_clientData signin)
-      currentRequest <- findRequestByChallenge requests chall
+      (currentRequest, remainingRequests) <- partitionRequestsByChallenge requests chall
       originalRequest <- findRegistrationByIdentifier registrations ((user userSignin) ++ (pass userSignin))
-      return $ verifySignin (savedKeyHandle originalRequest) currentRequest signin
+      return $ (verifySignin (savedKeyHandle originalRequest) currentRequest signin, remainingRequests)
     case (possibleSignin) of
-      Right _ -> json $ TL.pack "{status: 'ok'}"
+      Right (_, remainingRequests) -> do
+        liftIO $ atomicWriteIORef rCache remainingRequests
+        json $ TL.pack "{status: 'ok'}"
       Left err -> raise $ TL.pack (show err)
   get "/debug" $ do
-    requests <- liftIO $ readIORef rSaved
+    requests <- liftIO $ readIORef rCache
     text $ TL.pack (show requests)
   -- | Route for retrieving keyhandles
   get "/keyhandle" $ do

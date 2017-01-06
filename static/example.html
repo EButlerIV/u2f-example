@@ -81,14 +81,16 @@
       }
 
       // Get challenge from API
-      const fetchRequest = fetch('/request').then((response) => response.json());
+      function fetchRequest() {
+        return fetch('/request').then((response) => response.json());
+      }
 
       // Registration flow
       $('#registration-form').submit((event) => {
         event.preventDefault();
         const [email, password, submit] = event.target;
         // Fetch new Request from server
-        fetchRequest.then((request) => {
+        fetchRequest().then((request) => {
           // Send Register Request to Yubikey
           u2f.register('https://localhost:4000', [request], [], (registrationResponse) => {
             // Send Register Response to server
@@ -108,31 +110,6 @@
         });
       });
 
-      // Sign-in flow
-      /*$('#signin-form').submit((event) => {
-        event.preventDefault();
-        const [email, password, submit] = event.target;
-        // Fetch new Request from server
-        fetchRequest.then((request) => {
-          // Send Register Request to Yubikey
-          u2f.register('https://localhost:4000', [request], [], (registrationResponse) => {
-            // Send Register Response to server
-            postData('/user-register', {
-                username: email.value,
-                password: password.value,
-                registration: registrationResponse
-              })
-              .then((response) => response.json())
-              .then((responseResponse) => {
-                prependAlert('success', `Registered! ${responseResponse.keyHandle}`);
-              })
-              .catch(() => {
-                prependAlert('danger', `FAILED REGISTRATION`);
-              });
-          });
-        });
-      });*/
-
       // Sign-in
       $('#signin-form').submit((event) => {
         event.preventDefault();
@@ -142,7 +119,7 @@
           .then((response) => response.json())
           .then((keyHandle) => {
             // Fetch new Request from server
-            fetchRequest.then((request) => {
+            fetchRequest().then((request) => {
               const {appId, challenge, version} = request;
               u2f.sign(appId, challenge, [{keyHandle, version}], (data) => {
                 postData('/user-signin', {
